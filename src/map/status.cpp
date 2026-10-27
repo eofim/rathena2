@@ -26,6 +26,7 @@
 #include "guild.hpp"
 #include "homunculus.hpp"
 #include "itemdb.hpp"
+#include "instance.hpp"
 #include "map.hpp"
 #include "mercenary.hpp"
 #include "mob.hpp"
@@ -2809,6 +2810,15 @@ int32 status_calc_mob_(mob_data* md, uint8 opt)
 	if (md->master_id && battle_config.slaves_inherit_mode)
 		flag |= 32;
 
+    // Force a mutable base_status copy for mobs on instance maps.
+    std::shared_ptr<s_instance_difficulty_db> instance_rates = nullptr;
+    if (md->m >= 0) {
+        const int32 iid = map_getmapdata(md->m)->instance_id;
+        auto inst = util::umap_find(instances, iid);
+        if (inst) instance_rates = instance_difficulty_settings(inst->difficulty);
+    }
+    if (instance_rates) flag |= 64;
+
 	if (!flag) { // No special status required.
 		if (md->base_status) {
 			aFree(md->base_status);
@@ -3050,6 +3060,45 @@ int32 status_calc_mob_(mob_data* md, uint8 opt)
 			status->hp = status->max_hp;
 		}
 	}
+
+    if (instance_rates) {
+        const auto& r = *instance_rates;
+        auto scale32 = [](uint32 v, uint16 rate) -> uint32 {
+            return static_cast<uint32>(std::min<uint64>(static_cast<uint64>(v) * rate / 100, UINT32_MAX));
+        };
+        auto scale16 = [](uint16 v, uint16 rate) -> uint16 {
+            return static_cast<uint16>(std::min<uint64>(static_cast<uint64>(v) * rate / 100, UINT16_MAX));
+        };
+        auto scale_stat = [](int16 v, uint16 rate) -> int16 {
+            return static_cast<int16>(std::min<int64>(static_cast<int64>(v) * rate / 100, INT16_MAX));
+        };
+        auto scale_atk = [](int32 v, uint16 rate) -> int32 {
+            return static_cast<int32>(std::min<int64>(static_cast<int64>(v) * rate / 100, INT32_MAX));
+        };
+        status->max_hp = std::max<uint32>(1, scale32(status->max_hp, r.hp));
+        status->hp = status->max_hp;
+        status->speed = std::max<uint16>(MIN_WALK_SPEED, scale16(status->speed, r.speed));
+        status->str = scale_stat(status->str, r.str);
+        status->agi = scale_stat(status->agi, r.agi);
+        status->vit = scale_stat(status->vit, r.vit);
+        status->int_ = scale_stat(status->int_, r.int_);
+        status->dex = scale_stat(status->dex, r.dex);
+        status->luk = scale_stat(status->luk, r.luk);
+        status->batk = scale_atk(status->batk, r.atk);
+        status->rhw.atk = scale16(status->rhw.atk, r.atk);
+        status->rhw.atk2 = scale16(status->rhw.atk2, r.atk2);
+        status->matk_min = scale16(status->matk_min, r.matk);
+        status->matk_max = scale16(status->matk_max, r.matk2);
+        status->def = scale16(status->def, r.def);
+        status->mdef = scale16(status->mdef, r.mdef);
+        status->hit = scale_stat(status->hit, r.hit);
+        status->flee = scale_stat(status->flee, r.flee);
+        status->flee2 = scale_stat(status->flee2, r.flee2);
+        status->cri = scale_stat(status->cri, r.cri);
+        status->amotion = scale16(status->amotion, r.amotion);
+        status->adelay = scale16(status->adelay, r.adelay);
+        status->dmotion = scale16(status->dmotion, r.dmotion);
+    }
 
 	if (opt&SCO_FIRST) // Initial battle status
 		memcpy(&md->status, status, sizeof(struct status_data));

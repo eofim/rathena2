@@ -18584,6 +18584,33 @@ void clif_sendbgemblem_single( int32 fd, const map_session_data* sd )
 /// 0x8d7 <queue type>.W <battleground name>.24B (CZ_REQ_ENTRY_QUEUE_APPLY)
 void clif_parse_bg_queue_apply_request(int32 fd, map_session_data *sd)
 {
+    nullpo_retv(sd);
+    char instance_name[NAME_LENGTH]{};
+    // CZ_REQ_ENTRY_QUEUE_APPLY has 24 bytes at offset 4.
+    memcpy(instance_name, RFIFOCP(fd, 4), NAME_LENGTH - 1);
+    auto lobby = instance_search_db_idname(instance_name);
+    if (lobby) {
+        // 0x08D7 type 2 is PARTY, not difficulty.
+        if (RFIFOW(fd, 2) != 2 || sd->status.party_id == 0 ||
+            sd->npc_id || sd->npc_shopid || sd->vender_id ||
+            sd->state.trading || sd->state.storage_flag ||
+            !map_getmapflag(sd->m, MF_TOWN)) {
+            clif_bg_queue_apply_result(BG_APPLY_INVALID_APP, instance_name, sd);
+            return;
+        }
+        pc_setregstr(sd, add_str("@instance_idname$"), lobby->lobby_idname.c_str());
+        pc_setregstr(sd, add_str("@instance_name$"), lobby->name.c_str());
+        pc_setreg(sd, add_str("@instance_id"), lobby->id);
+        pc_setreg(sd, add_str("@min_level"), lobby->lobby_min_level);
+        pc_setreg(sd, add_str("@max_level"), lobby->lobby_max_level);
+        pc_setreg(sd, add_str("@instance_quest"), lobby->lobby_quest_id);
+        pc_setreg(sd, add_str("@lock"), lobby->lobby_lock_quest_id);
+        pc_setreg(sd, add_str("@party_limit"), lobby->lobby_party_limit);
+        pc_setreg(sd, add_str("@cooldown"), lobby->lobby_cooldown);
+        pc_setreg(sd, add_str("@difficulty_mask"), lobby->lobby_difficulty_mask);
+        npc_script_event(*sd, NPCE_INSTANCE);
+        return;
+    }
 	if (!battle_config.feature_bgqueue)
 		return;
 

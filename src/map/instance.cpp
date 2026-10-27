@@ -24,6 +24,8 @@
 #include "npc.hpp"
 #include "party.hpp"
 #include "pc.hpp"
+#include "mob.hpp"
+#include "status.hpp"
 
 using namespace rathena;
 
@@ -159,6 +161,48 @@ uint64 InstanceDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			instance->destroyable = true;
 	}
 
+    if (this->nodeExists(node, "Difficulty")) {
+        std::string name;
+        if (!this->asString(node, "Difficulty", name)) return 0;
+        int64 value = 0;
+        if (!script_get_constant(name.c_str(), &value) || value < ID_EASY || value >= ID_MAX) {
+            this->invalidWarning(node["Difficulty"], "Invalid instance difficulty '%s'.\n", name.c_str());
+            return 0;
+        }
+        instance->difficulty = static_cast<e_instance_difficulty>(value);
+    }
+    if (this->nodeExists(node, "LobbyMod")) {
+        const auto& lobby = node["LobbyMod"];
+        std::string idname;
+        if (!this->asString(lobby, "IdName", idname) || idname.empty() || idname.size() >= NAME_LENGTH) {
+            this->invalidWarning(lobby, "LobbyMod.IdName is missing or too long.\n");
+            return 0;
+        }
+        for (const auto& entry : instance_db) {
+            if (entry.first != instance_id && entry.second->lobby_idname == idname) {
+                this->invalidWarning(lobby, "Duplicate LobbyMod.IdName '%s'.\n", idname.c_str());
+                return 0;
+            }
+        }
+        instance->lobby_idname = idname;
+        if (this->nodeExists(lobby, "Min_Level") && !this->asInt32(lobby, "Min_Level", instance->lobby_min_level)) return 0;
+        if (this->nodeExists(lobby, "Max_Level") && !this->asInt32(lobby, "Max_Level", instance->lobby_max_level)) return 0;
+        if (this->nodeExists(lobby, "Quest_Id") && !this->asInt32(lobby, "Quest_Id", instance->lobby_quest_id)) return 0;
+        if (this->nodeExists(lobby, "Lock_Quest_Id") && !this->asInt32(lobby, "Lock_Quest_Id", instance->lobby_lock_quest_id)) return 0;
+        if (this->nodeExists(lobby, "Party_Limit") && !this->asInt32(lobby, "Party_Limit", instance->lobby_party_limit)) return 0;
+        if (this->nodeExists(lobby, "Instance_Cooldown") && !this->asInt32(lobby, "Instance_Cooldown", instance->lobby_cooldown)) return 0;
+        uint16 mask = instance->lobby_difficulty_mask;
+        if (this->nodeExists(lobby, "DifficultyMask") && !this->asUInt16(lobby, "DifficultyMask", mask)) return 0;
+        if (mask == 0 || mask > 15 || instance->lobby_min_level < 1 || instance->lobby_max_level < 0 ||
+            (instance->lobby_max_level && instance->lobby_max_level < instance->lobby_min_level) ||
+            instance->lobby_party_limit < 1 || instance->lobby_party_limit > MAX_PARTY ||
+            instance->lobby_quest_id < 0 || instance->lobby_lock_quest_id < 0 || instance->lobby_cooldown < 0) {
+            this->invalidWarning(lobby, "Invalid LobbyMod limits, quests, cooldown or difficulty mask.\n");
+            return 0;
+        }
+        instance->lobby_difficulty_mask = static_cast<uint8>(mask);
+    }
+
 	if (this->nodeExists(node, "Enter")) {
 		const auto& enterNode = node["Enter"];
 
@@ -270,6 +314,68 @@ uint64 InstanceDatabase::parseBodyNode(const ryml::NodeRef& node) {
 
 InstanceDatabase instance_db;
 
+const std::string InstanceDifficultyDatabase::getDefaultLocation() {
+    return std::string(db_path) + "/instance_mode_db.yml";
+}
+
+uint64 InstanceDifficultyDatabase::parseBodyNode(const ryml::NodeRef& node) {
+    std::string name;
+    if (!this->asString(node, "Mode", name)) return 0;
+    int64 key;
+    if (!script_get_constant(name.c_str(), &key) || key < ID_EASY || key >= ID_MAX) {
+        this->invalidWarning(node, "Invalid Mode '%s'.\n", name.c_str());
+        return 0;
+    }
+    auto entry = this->find(static_cast<int32>(key));
+    if (!entry) entry = std::make_shared<s_instance_difficulty_db>();
+#define READ_DIFFICULTY_FIELD(yaml, field) \
+    if (this->nodeExists(node, yaml)) { \
+        uint16 value; \
+        if (!this->asUInt16(node, yaml, value) || value == 0) return 0; \
+        entry->field = value; \
+    }
+    READ_DIFFICULTY_FIELD("ExpRate", exp_rate)
+    READ_DIFFICULTY_FIELD("DropRate", drop_rate)
+    READ_DIFFICULTY_FIELD("HP", hp)
+    READ_DIFFICULTY_FIELD("Speed", speed)
+    READ_DIFFICULTY_FIELD("STR", str)
+    READ_DIFFICULTY_FIELD("AGI", agi)
+    READ_DIFFICULTY_FIELD("VIT", vit)
+    READ_DIFFICULTY_FIELD("INT", int_)
+    READ_DIFFICULTY_FIELD("DEX", dex)
+    READ_DIFFICULTY_FIELD("LUK", luk)
+    READ_DIFFICULTY_FIELD("ATK", atk)
+    READ_DIFFICULTY_FIELD("ATK2", atk2)
+    READ_DIFFICULTY_FIELD("MATK", matk)
+    READ_DIFFICULTY_FIELD("MATK2", matk2)
+    READ_DIFFICULTY_FIELD("DEF", def)
+    READ_DIFFICULTY_FIELD("MDEF", mdef)
+    READ_DIFFICULTY_FIELD("HIT", hit)
+    READ_DIFFICULTY_FIELD("FLEE", flee)
+    READ_DIFFICULTY_FIELD("FLEE2", flee2)
+    READ_DIFFICULTY_FIELD("CRI", cri)
+    READ_DIFFICULTY_FIELD("AMOTION", amotion)
+    READ_DIFFICULTY_FIELD("ADELAY", adelay)
+    READ_DIFFICULTY_FIELD("DMOTION", dmotion)
+#undef READ_DIFFICULTY_FIELD
+    this->put(static_cast<int32>(key), entry);
+    return 1;
+}
+
+InstanceDifficultyDatabase instance_difficulty_db;
+
+std::shared_ptr<s_instance_difficulty_db> instance_difficulty_settings(e_instance_difficulty difficulty) {
+    return instance_difficulty_db.find(static_cast<int32>(difficulty));
+}
+
+std::shared_ptr<s_instance_db> instance_search_db_idname(const char* idname) {
+    if (!idname || !*idname) return nullptr;
+    for (const auto& entry : instance_db)
+        if (!entry.second->lobby_idname.empty() && entry.second->lobby_idname == idname)
+            return entry.second;
+    return nullptr;
+}
+
 /**
  * Searches for an instance name in the database
  * @param instance_name: Instance to search for
@@ -283,6 +389,24 @@ std::shared_ptr<s_instance_db> instance_search_db_name(const char *instance_name
 	}
 
 	return nullptr;
+}
+
+static int32 instance_difficulty_recalc_sub(block_list* bl, va_list ap) {
+    mob_data* md = BL_CAST(BL_MOB, bl);
+    if (md) status_calc_mob(md, SCO_FIRST);
+    return 0;
+}
+
+bool instance_setdifficulty(int32 instance_id, e_instance_difficulty difficulty) {
+    auto data = util::umap_find(instances, instance_id);
+    if (!data || difficulty < ID_EASY || difficulty >= ID_MAX || !instance_difficulty_settings(difficulty)) return false;
+    auto db = instance_db.find(data->id);
+    if (!db || (!db->lobby_idname.empty() && !(db->lobby_difficulty_mask & (1u << (difficulty - ID_EASY))))) return false;
+    if (data->difficulty == difficulty) return false;
+    data->difficulty = difficulty;
+    for (const auto& imap : data->map)
+        map_foreachinmap(instance_difficulty_recalc_sub, imap.m, BL_MOB);
+    return true;
 }
 
 /**
@@ -605,13 +729,22 @@ void instance_addnpc(std::shared_ptr<s_instance_data> idata)
  * @param mode: Instance mode
  * @return -4 = no free instances | -3 = already exists | -2 = character/party/guild not found | -1 = invalid type | On success return instance_id
  */
-int32 instance_create(int32 owner_id, const char *name, e_instance_mode mode) {
+int32 instance_create(int32 owner_id, const char *name, e_instance_mode mode, e_instance_difficulty difficulty) {
 	std::shared_ptr<s_instance_db> db = instance_search_db_name(name);
 
 	if (!db) {
 		ShowError("instance_create: Unknown instance %s creation was attempted.\n", name);
 		return -1;
 	}
+
+    if (difficulty == ID_DEFAULT) difficulty = db->difficulty;
+    if (difficulty < ID_EASY || difficulty >= ID_MAX) return -1;
+    if (!db->lobby_idname.empty() && (db->lobby_difficulty_mask & (1u << (difficulty - ID_EASY))) == 0)
+        return -1;
+    if (!instance_difficulty_settings(difficulty)) {
+        ShowError("instance_create: difficulty %u not found in instance_mode_db.yml.\n", static_cast<unsigned>(difficulty));
+        return -1;
+    }
 
 	map_session_data *sd = nullptr;
 	struct party_data *pd;
@@ -667,6 +800,7 @@ int32 instance_create(int32 owner_id, const char *name, e_instance_mode mode) {
 	entry->id = db->id;
 	entry->owner_id = owner_id;
 	entry->mode = mode;
+	entry->difficulty = difficulty;
 	entry->regs.vars = i64db_alloc(DB_OPT_RELEASE_DATA);
 	entry->regs.arrays = nullptr;
 	instances.insert({ instance_id, entry });
@@ -1305,6 +1439,7 @@ void do_reload_instance(void)
 void do_init_instance(void) {
 	instance_start = map_num;
 	instance_db.load();
+	instance_difficulty_db.load();
 	instance_wait.timer = INVALID_TIMER;
 
 	add_timer_func_list(instance_delete_timer,"instance_delete_timer");

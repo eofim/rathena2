@@ -8476,6 +8476,22 @@ void pc_gainexp(map_session_data *sd, block_list *src, t_exp base_exp, t_exp job
 	if (!(exp_flag&2))
 		pc_calcexp(sd, &base_exp, &job_exp, src);
 
+    // Monsters from a dungeon inherit the instance EXP modifier.
+    if (!(exp_flag & 3) && src && src->type == BL_MOB) {
+        const int16 m = src->m;
+        if (m >= 0) {
+            const int32 iid = map_getmapdata(m)->instance_id;
+            auto inst = util::umap_find(instances, iid);
+            if (inst) {
+                auto settings = instance_difficulty_settings(inst->difficulty);
+                if (settings) {
+                    base_exp = static_cast<t_exp>(std::min<uint64>(static_cast<uint64>(base_exp) * settings->exp_rate / 100, MAX_EXP));
+                    job_exp = static_cast<t_exp>(std::min<uint64>(static_cast<uint64>(job_exp) * settings->exp_rate / 100, MAX_EXP));
+                }
+            }
+        }
+    }
+
 	nextb = pc_nextbaseexp(sd);
 	nextj = pc_nextjobexp(sd);
 

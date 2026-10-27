@@ -29,6 +29,7 @@
 #include "elemental.hpp"
 #include "guild.hpp"
 #include "homunculus.hpp"
+#include "instance.hpp"
 #include "intif.hpp"
 #include "itemdb.hpp"
 #include "log.hpp"
@@ -2836,6 +2837,15 @@ int32 mob_getdroprate(block_list *src, std::shared_ptr<s_mob_db> mob, int32 base
 		if (src->type == BL_PC) { // Player specific drop rate adjustments
 			map_session_data *sd = (map_session_data*)src;
 			int32 drop_rate_bonus = 100;
+            // Use the killed mob's instance, not a nearby player's current map.
+            if (md && md->m >= 0) {
+                const int32 iid = map_getmapdata(md->m)->instance_id;
+                auto inst = util::umap_find(instances, iid);
+                if (inst) {
+                    auto settings = instance_difficulty_settings(inst->difficulty);
+                    if (settings) drop_rate_bonus += settings->drop_rate - 100;
+                }
+            }
 
 			// In PK mode players get an additional drop chance bonus of 25% if there is a 20 level difference
 			if( battle_config.pk_mode && (int32)(mob->lv - sd->status.base_level) >= 20 ){

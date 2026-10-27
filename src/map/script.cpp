@@ -309,6 +309,7 @@ struct Script_Config script_config = {
 	// Instance related
 	"OnInstanceInit", //instance_init_event_name (is executed right after instance creation)
 	"OnInstanceDestroy", //instance_destroy_event_name (is executed right before instance destruction)
+	"OnJoinInstance", //join_instance_event_name
 	"OnNaviGenerate", //navi_generate_name (is executed right before navi generation)
 };
 
@@ -21744,8 +21745,27 @@ BUILDIN_FUNC(instance_create)
 		}
 	}
 
-	script_pushint(st, instance_create(owner_id, script_getstr(st, 2), mode));
+    e_instance_difficulty difficulty = ID_DEFAULT;
+    if (script_hasdata(st, 5)) difficulty = static_cast<e_instance_difficulty>(script_getnum(st, 5));
+    script_pushint(st, instance_create(owner_id, script_getstr(st, 2), mode, difficulty));
 	return SCRIPT_CMD_SUCCESS;
+}
+
+// Returns the difficulty associated with a running instance.
+BUILDIN_FUNC(instance_getdifficulty)
+{
+    const int32 iid = script_getnum(st, 2);
+    auto data = util::umap_find(instances, iid);
+    script_pushint(st, data ? static_cast<int32>(data->difficulty) : ID_DEFAULT);
+    return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(instance_setdifficulty)
+{
+    const int32 iid = script_getnum(st, 2);
+    const auto diff = static_cast<e_instance_difficulty>(script_getnum(st, 3));
+    script_pushint(st, instance_setdifficulty(iid, diff) ? 1 : 0);
+    return SCRIPT_CMD_SUCCESS;
 }
 
 /*==========================================
@@ -28417,7 +28437,9 @@ struct script_function buildin_func[] = {
 	BUILDIN_DEF(bg_info,"si"),
 
 	// Instancing
-	BUILDIN_DEF(instance_create,"s??"),
+    BUILDIN_DEF(instance_create,"s???"),
+    BUILDIN_DEF(instance_getdifficulty,"i"),
+    BUILDIN_DEF(instance_setdifficulty,"ii"),
 	BUILDIN_DEF(instance_destroy,"?"),
 	BUILDIN_DEF(instance_id,"?"),
 	BUILDIN_DEF(instance_enter,"s????"),

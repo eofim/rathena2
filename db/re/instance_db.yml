@@ -29,6 +29,16 @@
 #   NoNpc             Prevent copying NPCs from the source map. (Default: false)
 #   NoMapFlag         Prevent copying Mapflags from the source map. (Default: false)
 #   Destroyable       Toggles the ability to destroy the instance using instance 'Destroy' button. (Default: true)
+#   Difficulty        Default: ID_NORMAL. Other values: ID_EASY, ID_HARD, ID_INSANE.
+#   LobbyMod:          Optional. Enables 0x08D7 NPC-based instance lobby.
+#     IdName           Must match the client-side Instance Lobby IdName (up to 23 chars).
+#     Min_Level        Minimum BaseLevel (default: 1)
+#     Max_Level        Maximum BaseLevel, 0 means no limit.
+#     Quest_Id         Quest that must be complete, 0 disables check.
+#     Lock_Quest_Id    Quest that blocks entry when complete, 0 disables check.
+#     Party_Limit      Maximum number of members (default: 12)
+#     Instance_Cooldown  Account-wide cooldown in seconds (default: 0)
+#     DifficultyMask   Bitset of Easy=1, Normal=2, Hard=4, Insane=8 (default: 15)
 #                     Note: the button is displayed based on parties. For any mode, it requires the party leader to be the instance owner to destroy it.
 #   Enter:            Instance entrance coordinates.
 #     Map             Map Name where players start.

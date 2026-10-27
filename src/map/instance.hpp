@@ -38,6 +38,16 @@ enum e_instance_mode : uint8 {
 	IM_MAX,
 };
 
+// rAthena vanilla: independent difficulty per instance execution.
+enum e_instance_difficulty : uint8 {
+    ID_DEFAULT = 0,
+    ID_EASY = 1,
+    ID_NORMAL = 2,
+    ID_HARD = 3,
+    ID_INSANE = 4,
+    ID_MAX = 5,
+};
+
 enum e_instance_enter : uint8 {
 	IE_OK,
 	IE_NOMEMBER,
@@ -62,6 +72,7 @@ struct s_instance_data {
 	int32 id; ///< Instance DB ID
 	e_instance_state state; ///< State of instance
 	e_instance_mode mode; ///< Mode of instance
+	e_instance_difficulty difficulty = ID_NORMAL; ///< Selected difficulty
 	int32 owner_id; ///< Owner ID of instance
 	int64 keep_limit; ///< Life time of instance
 	int32 keep_timer; ///< Life time ID
@@ -96,6 +107,16 @@ struct s_instance_db {
 	bool nonpc;
 	bool nomapflag;
 	bool destroyable; ///< Destroyable flag
+	e_instance_difficulty difficulty = ID_NORMAL;
+    // LobbyMod is opt-in. Empty idName preserves all official instances.
+    std::string lobby_idname;
+    int32 lobby_min_level = 1;
+    int32 lobby_max_level = 0;
+    int32 lobby_quest_id = 0;
+    int32 lobby_lock_quest_id = 0;
+    int32 lobby_party_limit = 12;
+    int32 lobby_cooldown = 0;
+    uint8 lobby_difficulty_mask = 15;
 	bool infinite_limit; ///< Infinite limit flag
 	bool infinite_timeout; ///< Infinite timeout limit flag
 	struct point enter; ///< Instance entry point
@@ -112,6 +133,26 @@ public:
 	uint64 parseBodyNode(const ryml::NodeRef& node) override;
 };
 
+// All modifiers are percentages; 100 means untouched.
+struct s_instance_difficulty_db {
+    uint16 exp_rate = 100, drop_rate = 100;
+    uint16 hp = 100, speed = 100;
+    uint16 str = 100, agi = 100, vit = 100, int_ = 100, dex = 100, luk = 100;
+    uint16 atk = 100, atk2 = 100, matk = 100, matk2 = 100, def = 100, mdef = 100, hit = 100;
+    uint16 flee = 100, flee2 = 100, cri = 100, amotion = 100, adelay = 100, dmotion = 100;
+};
+
+class InstanceDifficultyDatabase : public TypesafeYamlDatabase<int32, s_instance_difficulty_db> {
+public:
+    InstanceDifficultyDatabase() : TypesafeYamlDatabase("INSTANCE_DIFFICULTY_DB", 1) {}
+    const std::string getDefaultLocation() override;
+    uint64 parseBodyNode(const ryml::NodeRef& node) override;
+};
+
+extern InstanceDifficultyDatabase instance_difficulty_db;
+std::shared_ptr<s_instance_difficulty_db> instance_difficulty_settings(e_instance_difficulty difficulty);
+std::shared_ptr<s_instance_db> instance_search_db_idname(const char* idname);
+
 extern InstanceDatabase instance_db;
 
 extern std::unordered_map<int32, std::shared_ptr<s_instance_data>> instances;
@@ -119,8 +160,9 @@ extern std::unordered_map<int32, std::shared_ptr<s_instance_data>> instances;
 std::shared_ptr<s_instance_db> instance_search_db_name(const char* name);
 void instance_getsd(int32 instance_id, map_session_data *&sd, enum send_target *target);
 
-int32 instance_create(int32 owner_id, const char *name, e_instance_mode mode);
+int32 instance_create(int32 owner_id, const char *name, e_instance_mode mode, e_instance_difficulty difficulty = ID_DEFAULT);
 bool instance_destroy(int32 instance_id);
+bool instance_setdifficulty(int32 instance_id, e_instance_difficulty difficulty);
 void instance_destroy_command(map_session_data *sd);
 e_instance_enter instance_enter(map_session_data *sd, int32 instance_id, const char *name, int16 x, int16 y);
 bool instance_reqinfo(map_session_data *sd, int32 instance_id);

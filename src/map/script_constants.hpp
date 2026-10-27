@@ -4299,6 +4299,12 @@
 	export_constant(IM_GUILD);
 	export_constant(IM_CLAN);
 
+    // Instance difficulties: script-level constants.
+    export_constant(ID_EASY);
+    export_constant(ID_NORMAL);
+    export_constant(ID_HARD);
+    export_constant(ID_INSANE);
+
 	/* mob random groups */
 	export_constant(MOBG_BRANCH_OF_DEAD_TREE);
 	export_constant(MOBG_PORING_BOX);

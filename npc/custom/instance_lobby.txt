@@ -1,0 +1,212 @@
+// rAthena vanilla Instance Lobby. Triggered by client packet 0x08D7 (party, IdName).
+// The client must have the matching IdName entry in its instance UI table.
+-	script	InstanceLobbyCore	-1,{
+    end;
+
+OnInit:
+    $instance_lobby_boot_token = gettimetick(2);
+    bindatcmd "instancias", strnpcinfo(3) + "::OnAtcommandInstancias", 0, 99;
+    end;
+
+OnJoinInstance:
+    .@name$ = @instance_name$;
+    .@id = @instance_id;
+    .@party = getcharid(1);
+    .@aid = getcharid(3);
+    .@now = gettimetick(2);
+    if (.@id <= 0 || .@party <= 0 || .@name$ == "" || .@aid <= 0) end;
+
+    // Account-wide per-instance cooldown and active run tracking (Legacy variables)
+    .@cd$ = "#ILCD" + .@id;
+    .@run$ = "#ILRUN" + .@id;
+    .@leg_cd = getd(.@cd$);
+    .@leg_run = getd(.@run$);
+
+    // Query dedicated SQL lock for current account + instance
+    .@sql_party = 0;
+    .@sql_run = 0;
+    .@sql_token = 0;
+    .@sql_cd = 0;
+    query_sql("SELECT `party_id`, `run_instance_id`, `run_boot_token`, `cooldown_until` FROM `instance_lobby_lock` WHERE `account_id` = " + .@aid + " AND `instance_db_id` = " + .@id, .@sql_party, .@sql_run, .@sql_token, .@sql_cd);
+
+    // Effective cooldown is the maximum between SQL and legacy variable
+    .@eff_cd = max(.@leg_cd, .@sql_cd);
+
+    .@iid = instance_id(IM_PARTY);
+    .@active = (.@iid > 0 && instance_getdifficulty(.@iid) > 0);
+
+    // Reentry check: permitted during cooldown if matching same active party run
+    if (.@active) {
+        .@is_own_run = false;
+        if (.@sql_run == .@iid && .@sql_token == $instance_lobby_boot_token && .@sql_party == .@party) {
+            .@is_own_run = true;
+        } else if (.@leg_run == .@iid) {
+            .@is_own_run = true;
+        }
+
+        if (.@is_own_run) {
+            if (instance_enter(.@name$) == IE_OK) end;
+        }
+    }
+
+    if (.@eff_cd > .@now) {
+        .@rem = .@eff_cd - .@now;
+        .@h = .@rem / 3600;
+        .@m = (.@rem % 3600) / 60;
+        .@s = .@rem % 60;
+        dispbottom "Esta instância ainda está em cooldown (" + sprintf("%02d:%02d:%02d", .@h, .@m, .@s) + ").", 0xFF4444;
+        end;
+    }
+
+    if ((@min_level && BaseLevel < @min_level) || (@max_level && BaseLevel > @max_level)) {
+        dispbottom "Seu nível não atende aos requisitos desta instância.", 0xFF4444;
+        end;
+    }
+    if (@instance_quest && checkquest(@instance_quest) != 2) {
+        dispbottom "Você ainda não concluiu a missão necessária.", 0xFF4444;
+        end;
+    }
+    if (@lock && checkquest(@lock) == 2) {
+        dispbottom "Você possui uma missão que bloqueia esta instância.", 0xFF4444;
+        end;
+    }
+
+    // Entering an existing party run (first entry for this member)
+    if (.@active) {
+        .@diff = instance_getdifficulty(.@iid);
+        .@new_cd = .@now + @cooldown;
+        // Record SQL lock before entering to avoid bypasses
+        query_sql("INSERT INTO `instance_lobby_lock` (`account_id`, `instance_db_id`, `id_name`, `party_id`, `run_instance_id`, `run_boot_token`, `difficulty`, `cooldown_until`) VALUES (" + .@aid + ", " + .@id + ", '" + escape_sql(@instance_idname$) + "', " + .@party + ", " + .@iid + ", " + $instance_lobby_boot_token + ", " + .@diff + ", " + .@new_cd + ") ON DUPLICATE KEY UPDATE `id_name` = VALUES(`id_name`), `party_id` = VALUES(`party_id`), `run_instance_id` = VALUES(`run_instance_id`), `run_boot_token` = VALUES(`run_boot_token`), `difficulty` = VALUES(`difficulty`), `cooldown_until` = VALUES(`cooldown_until`)");
+        setd(.@cd$, .@new_cd);
+        setd(.@run$, .@iid);
+
+        if (instance_enter(.@name$) == IE_OK) end;
+        dispbottom "Falha ao entrar na instância ativa do grupo.", 0xFF4444;
+        end;
+    }
+
+    // Party checks for creating a new instance run
+    getpartymember .@party, 2, .@member_aid;
+    getpartymember .@party, 0, .@member_name$;
+    .@member_count = $@partymembercount;
+
+    if (.@member_count > @party_limit) {
+        dispbottom "O grupo excede o limite de jogadores da instância (Máx: " + @party_limit + ").", 0xFF4444;
+        end;
+    }
+    if (!is_party_leader(.@party)) {
+        dispbottom "Apenas o líder pode criar uma nova instância.", 0xFF4444;
+        end;
+    }
+
+    // Check SQL cooldown of all party members (online or offline)
+    for (.@i = 0; .@i < .@member_count; ++.@i) {
+        .@m_aid = .@member_aid[.@i];
+        .@m_cd = 0;
+        query_sql("SELECT `cooldown_until` FROM `instance_lobby_lock` WHERE `account_id` = " + .@m_aid + " AND `instance_db_id` = " + .@id, .@m_cd);
+        if (.@m_cd > .@now) {
+            .@rem = .@m_cd - .@now;
+            .@h = .@rem / 3600;
+            .@m = (.@rem % 3600) / 60;
+            .@s = .@rem % 60;
+            dispbottom "O integrante " + .@member_name$[.@i] + " possui cooldown ativo (" + sprintf("%02d:%02d:%02d", .@h, .@m, .@s) + ").", 0xFF4444;
+            end;
+        }
+    }
+
+    .@mask = @difficulty_mask;
+    .@choices$ = "";
+    if (.@mask & 1) .@choices$ += "Fácil:";
+    if (.@mask & 2) .@choices$ += "Normal:";
+    if (.@mask & 4) .@choices$ += "Difícil:";
+    if (.@mask & 8) .@choices$ += "Insano:";
+    mes "[Lobby de Instâncias]";
+    mes "Instância: " + .@name$;
+    mes "Escolha a dificuldade:";
+    next;
+    .@sel = select(.@choices$);
+    .@diff = 0;
+    for (.@bit = 0, .@j = 0; .@bit < 4; ++.@bit) {
+        if (.@mask & (1 << .@bit)) {
+            ++.@j;
+            if (.@j == .@sel) .@diff = .@bit + 1;
+        }
+    }
+    if (.@diff < ID_EASY || .@diff > ID_INSANE) close;
+
+    // Revalidate after dialog: leader status, party intact, size and cooldowns
+    if (!is_party_leader(.@party) || .@party != getcharid(1)) close;
+    if (getd(.@cd$) > gettimetick(2)) close;
+
+    // Recheck party size
+    getpartymember .@party, 2, .@member_aid;
+    getpartymember .@party, 0, .@member_name$;
+    .@member_count = $@partymembercount;
+    if (.@member_count > @party_limit) {
+        mes "O grupo excede o limite de membros permitido.";
+        close;
+    }
+
+    // Recheck SQL cooldowns of members after dialog
+    .@now = gettimetick(2);
+    for (.@i = 0; .@i < .@member_count; ++.@i) {
+        .@m_aid = .@member_aid[.@i];
+        .@m_cd = 0;
+        query_sql("SELECT `cooldown_until` FROM `instance_lobby_lock` WHERE `account_id` = " + .@m_aid + " AND `instance_db_id` = " + .@id, .@m_cd);
+        if (.@m_cd > .@now) {
+            mes "O integrante " + .@member_name$[.@i] + " entrou em cooldown durante a seleção.";
+            close;
+        }
+    }
+
+    .@created = instance_create(.@name$, IM_PARTY, .@party, .@diff);
+    if (.@created <= 0) {
+        mes "Não foi possível criar a instância. Código: " + .@created;
+        close;
+    }
+
+    .@new_cd = gettimetick(2) + @cooldown;
+    // Record SQL lock for leader immediately
+    .@sql_res = query_sql("INSERT INTO `instance_lobby_lock` (`account_id`, `instance_db_id`, `id_name`, `party_id`, `run_instance_id`, `run_boot_token`, `difficulty`, `cooldown_until`) VALUES (" + .@aid + ", " + .@id + ", '" + escape_sql(@instance_idname$) + "', " + .@party + ", " + .@created + ", " + $instance_lobby_boot_token + ", " + .@diff + ", " + .@new_cd + ") ON DUPLICATE KEY UPDATE `id_name` = VALUES(`id_name`), `party_id` = VALUES(`party_id`), `run_instance_id` = VALUES(`run_instance_id`), `run_boot_token` = VALUES(`run_boot_token`), `difficulty` = VALUES(`difficulty`), `cooldown_until` = VALUES(`cooldown_until`)");
+
+    if (.@sql_res < 0) {
+        // Safe rollback: destroy newly created instance if SQL failed
+        instance_destroy(.@created);
+        mes "Erro ao registrar bloqueio no banco de dados. A instância foi cancelada por segurança.";
+        close;
+    }
+
+    setd(.@run$, .@created);
+    setd(.@cd$, .@new_cd);
+
+    mes "Instância criada com sucesso. A dificuldade foi fixada para esta execução.";
+    mes "Outros membros podem usar o Lobby para entrar.";
+    close;
+
+OnAtcommandInstancias:
+    .@aid = getcharid(3);
+    .@now = gettimetick(2);
+    .@rows = query_sql("SELECT `instance_db_id`, `id_name`, `difficulty`, `cooldown_until` FROM `instance_lobby_lock` WHERE `account_id` = " + .@aid + " AND `cooldown_until` > " + .@now + " ORDER BY `cooldown_until` ASC", .@q_id, .@q_name$, .@q_diff, .@q_cd);
+
+    if (.@rows <= 0) {
+        dispbottom "Você não possui cooldowns de instâncias ativos no momento.", 0x88FF88;
+        end;
+    }
+
+    dispbottom "=== Cooldowns de Instâncias Ativos ===", 0xFFFF00;
+    for (.@i = 0; .@i < .@rows; ++.@i) {
+        .@rem = .@q_cd[.@i] - .@now;
+        .@h = .@rem / 3600;
+        .@m = (.@rem % 3600) / 60;
+        .@s = .@rem % 60;
+        switch (.@q_diff[.@i]) {
+            case 1: .@d$ = "Fácil"; break;
+            case 2: .@d$ = "Normal"; break;
+            case 3: .@d$ = "Difícil"; break;
+            case 4: .@d$ = "Insano"; break;
+            default: .@d$ = "Padrão"; break;
+        }
+        dispbottom "- " + .@q_name$[.@i] + " [" + .@d$ + "]: liberado em " + sprintf("%02d:%02d:%02d", .@h, .@m, .@s), 0xFFFFFF;
+    }
+    end;
+}
